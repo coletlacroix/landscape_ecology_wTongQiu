@@ -1,0 +1,138 @@
+---
+title: 'Example: Manual Regression'
+author: "Cole LaCroix"
+date: "2025-09-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+## ------------------------------------------------------------
+## Minimal reproducible example data
+## ------------------------------------------------------------
+set.seed(42)
+n  <- 30
+x  <- runif(n, 0, 10)
+y  <- 1.5 + 2.3*x + rnorm(n, sd = 2)
+
+## ------------------------------------------------------------
+## 1) Closed-form formulas for simple linear regression
+##    y = b0 + b1*x + e
+## ------------------------------------------------------------
+x_bar <- mean(x); y_bar <- mean(y)
+Sxx   <- sum( (x - x_bar)^2 )
+Sxy   <- sum( (x - x_bar)*(y - y_bar) )
+
+b1 <- Sxy / Sxx
+b0 <- y_bar - b1*x_bar
+
+fitted <- b0 + b1*x
+resid  <- y - fitted
+
+## Residual variance (sigma^2), with df = n - 2
+RSS   <- sum(resid^2)
+sigma2 <- RSS / (n - 2)
+sigma  <- sqrt(sigma2)
+
+## Standard errors for b0 and b1
+se_b1 <- sqrt( sigma2 / Sxx )
+se_b0 <- sqrt( sigma2 * ( 1/n + x_bar^2 / Sxx ) )
+
+## t-stats and p-values (df = n - 2)
+t_b1 <- b1 / se_b1
+t_b0 <- b0 / se_b0
+p_b1 <- 2*pt(-abs(t_b1), df = n - 2)
+p_b0 <- 2*pt(-abs(t_b0), df = n - 2)
+
+## R^2 and adjusted R^2
+TSS  <- sum( (y - y_bar)^2 )
+R2   <- 1 - RSS/TSS
+adjR2 <- 1 - ( (RSS/(n-2)) / (TSS/(n-1)) )
+
+## 95% CIs
+alpha <- 0.05
+tcrit <- qt(1 - alpha/2, df = n - 2)
+ci_b1 <- c(b1 - tcrit*se_b1, b1 + tcrit*se_b1)
+ci_b0 <- c(b0 - tcrit*se_b0, b0 + tcrit*se_b0)
+
+cat("Closed-form results\n")
+cat(sprintf("b0 (intercept) = %.4f  SE=%.4f  t=%.2f  p=%.3g  CI95=[%.4f, %.4f]\n",
+            b0, se_b0, t_b0, p_b0, ci_b0[1], ci_b0[2]))
+cat(sprintf("b1 (slope)     = %.4f  SE=%.4f  t=%.2f  p=%.3g  CI95=[%.4f, %.4f]\n",
+            b1, se_b1, t_b1, p_b1, ci_b1[1], ci_b1[2]))
+cat(sprintf("Sigma (RMSE) = %.4f,  R^2 = %.4f,  adj R^2 = %.4f\n\n", sigma, R2, adjR2))
+
+## ------------------------------------------------------------
+## 2) Matrix form via normal equations: beta = (X'X)^(-1) X'y
+## ------------------------------------------------------------
+X <- cbind(1, x)                 # design matrix with intercept
+y_vec <- as.matrix(y)
+
+XtX   <- t(X) %*% X
+Xty   <- t(X) %*% y_vec
+beta  <- solve(XtX, Xty)         # [b0; b1]
+f_hat <- X %*% beta
+e_hat <- y_vec - f_hat
+
+RSS_m <- as.numeric(t(e_hat) %*% e_hat)
+p     <- ncol(X)                  # number of parameters (2: intercept+slope)
+sigma2_m <- RSS_m / (n - p)
+vcov_beta <- sigma2_m * solve(XtX)
+se_beta   <- sqrt(diag(vcov_beta))
+t_vals    <- as.numeric(beta / se_beta)
+p_vals    <- 2*pt(-abs(t_vals), df = n - p)
+
+cat("Matrix/normal-equations results\n")
+res_tab <- data.frame(
+  coef = c("b0 (Intercept)", "b1 (Slope)"),
+  estimate = as.numeric(beta),
+  std_error = se_beta,
+  t_value = t_vals,
+  p_value = p_vals
+)
+print(res_tab, row.names = FALSE)
+
+## ------------------------------------------------------------
+## 3) Compare to lm() just to verify
+## ------------------------------------------------------------
+fit <- lm(y ~ x)
+cat("\nSanity check with lm():\n")
+print(coef(summary(fit)))
+cat(sprintf("R^2(lm) = %.4f,  adj R^2(lm) = %.4f\n", summary(fit)$r.squared, summary(fit)$adj.r.squared))
+
+## ------------------------------------------------------------
+## 4) Optional helpers: prediction & intervals (manual)
+##    For a new x0, prediction y0_hat = b0 + b1*x0
+##    SE for mean response at x0:  sqrt( sigma^2 * (1/n + (x0 - x_bar)^2 / Sxx) )
+##    SE for prediction (new obs): sqrt( sigma^2 * (1 + 1/n + (x0 - x_bar)^2 / Sxx) )
+## ------------------------------------------------------------
+predict_manual <- function(x0, b0, b1, sigma2, x_bar, Sxx, alpha = 0.05, df = n - 2,
+                           interval = c("none","confidence","prediction")){
+  interval <- match.arg(interval)
+  yhat <- b0 + b1*x0
+  if(interval == "none") return(data.frame(x0 = x0, fit = yhat))
+  tcrit <- qt(1 - alpha/2, df = df)
+  if(interval == "confidence"){
+    se_mean <- sqrt( sigma2 * (1/n + (x0 - x_bar)^2 / Sxx) )
+    lo <- yhat - tcrit*se_mean
+    hi <- yhat + tcrit*se_mean
+    return(data.frame(x0 = x0, fit = yhat, lwr = lo, upr = hi, type = "mean"))
+  } else {
+    se_pred <- sqrt( sigma2 * (1 + 1/n + (x0 - x_bar)^2 / Sxx) )
+    lo <- yhat - tcrit*se_pred
+    hi <- yhat + tcrit*se_pred
+    return(data.frame(x0 = x0, fit = yhat, lwr = lo, upr = hi, type = "prediction"))
+  }
+}
+
+## Example:
+predict_manual(x0 = c(2, 5, 8), b0 = b0, b1 = b1, sigma2 = sigma2,
+               x_bar = x_bar, Sxx = Sxx, interval = "confidence")
+predict_manual(x0 = c(2, 5, 8), b0 = b0, b1 = b1, sigma2 = sigma2,
+               x_bar = x_bar, Sxx = Sxx, interval = "prediction")
+
+```
+

@@ -1,0 +1,254 @@
+---
+title: "02 - Scale"
+author: "Cole LaCroix"
+date: "2025-09-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#install packages if not already installed
+if(!require(sf)) install.packages("sf")
+if(!require(fields)) install.packages("fields")
+if(!require(Matrix)) install.packages("Matrix")
+if(!require(terra)) install.packages("terra")
+if(!require(here)) install.packages("here")
+
+#load required packages
+library(sf)
+library(fields)      
+library(Matrix)
+library(terra)
+library(here)
+```
+
+```{r}
+# Ensure the random numbers are reproducible
+set.seed(16) 
+
+# Create a 6x6 raster
+toy <- rast(ncol = 6, nrow = 6, xmin = 1, xmax = 6, ymin = 1, ymax = 6) 
+
+# Fill the raster with random Poisson values (mean ~3)
+toy[] <- rpois(ncell(toy), lambda=3) 
+
+# Visualize the raster and cell values
+plot(toy, axes = FALSE, box = FALSE)
+text(toy, digits = 2)
+```
+
+```{r}
+# Increase the grain (reduce resolution)
+# Combine each 2x2 block of the original raster into one larger cell; Take the mean value of the four cells
+toy_mean <- aggregate(toy, fact = 2, fun = mean)
+
+# Plot the mean-aggregated raster and display values
+plot(toy_mean); text(toy_mean,digits=1)
+
+# Compare summary statistics
+# Calculate mean and variance for the original raster
+global(toy, mean);global(toy, var)
+
+# Calculate mean and variance for the mean-aggregated raster
+global(toy_mean, mean); global(toy_mean, var)
+
+# Decrease the grain (increase resolution)
+# Split each cell into 2x2 smaller sub-cells (values simply replicated)
+toy_dis2 <- disagg(toy, fact = 2)
+plot(toy_dis2); text(toy_dis2,digits=1)
+```
+
+```{r}
+# Crop to a smaller extent
+e <- ext(2, 4, 2, 4) # Define a new extent (xmin=2, xmax=4, ymin=2, ymax=4)
+toy_crop <- crop(toy, e) # Crop the raster to the smaller extent
+
+plot(toy) # Plot the original raster
+plot(toy_crop) # Plot the cropped raster
+
+# Extend to a larger extent
+e <- ext(0, 7, 0, 7) # Define a new larger extent (xmin=0, xmax=7, ymin=0, ymax=7)
+toy_big <- extend(toy,e) # Extend the raster to the larger extent (new cells filled with NA)
+
+plot(toy)  # Plot the original raster
+plot(toy_big)  # Plot the extended raster
+```
+
+```{r}
+# Load the NLCD 2011 raster
+nlcd <- rast("/Users/colelacroix/Documents/Lab1_data/nlcd2011SE")
+
+# See the meaning of legend here https://www.mrlc.gov/data/legends/national-land-cover-database-2011-nlcd2011-legend
+plot(nlcd) 
+
+# Check projection/CRS and basic properties: resolution, number of cells, and spatial extent
+crs(nlcd); res(nlcd); ncell(nlcd); ext(nlcd)
+```
+```{r}
+# Load site shapefile
+sites <- vect("/Users/colelacroix/Documents/Lab1_data/reptiledata")
+
+# Assign the same CRS as the NLCD raster
+crs(sites) <- crs(nlcd)
+
+# Summarize attributes and previews the first two rows
+summary(sites); head(sites, 2)
+```
+
+```{r}
+# Plot with custom color scheme
+my_col <- c("black","blue","darkorange","red","darkred","grey30","grey50", "lightgreen",
+            "green", "darkgreen", "yellow", "goldenrod", "purple", "orchid","lightblue", "lightcyan")
+
+plot(nlcd, col=my_col, axes=F, box=F)
+plot(sites, col="red", add=T, pch=19)
+```
+
+```{r}
+# Removes “Corn” management sites
+# head(sites)
+sites <- subset(sites, sites$management!="Corn")
+
+# Crop raster to 10 km from sampling points: determine min/max coordinates for new extent
+x.min <- min(sites$coords_x1) - 10000
+x.max <- max(sites$coords_x1) + 10000
+y.min <- min(sites$coords_x2) - 10000
+y.max <- max(sites$coords_x2) + 10000
+
+# Defines a new extent based on site coordinates ±10 km
+extent.new <- ext(x.min, x.max, y.min, y.max)
+
+# Crops the raster to this smaller area of interest
+nlcd <- crop(nlcd, extent.new)
+```
+
+```{r}
+# Create a binary forest layer using nlcd as template
+forest <- nlcd
+
+# Set to zero
+values(forest) <- 0
+
+# Reclassify
+forest[nlcd==41 | nlcd==42 | nlcd==43] <- 1  # locations with deciduous + evergreen + mixed forest
+
+# Plot
+plot(forest)
+plot(sites, pch=21, col="red", add=T)
+```
+
+```{r}
+buf1km <- 1000
+buf5km <- 5000
+
+# Try buffering first site
+buffer.site1.1km <- buffer(sites[1,], width=buf1km)
+buffer.site1.5km <- buffer(sites[1,], width=buf5km)
+
+# Plot (remember to run the following codes at the same time otherwise will have errors)
+zoom(nlcd, buffer.site1.5km, col=my_col, box=F)
+plot(buffer.site1.1km, border="red", lwd = 3, add=T)
+plot(buffer.site1.5km, border="red", lwd = 3, add=T)
+points(sites[1,], pch=19, cex=2)
+plot(sites[1,], col="grey20", bg="black", pch=22, cex=1, add=T)
+```
+
+```{r}
+# View just forest within buffer
+zoom(forest, buffer.site1.1km, box=F)
+plot(buffer.site1.1km, border="red", lwd = 3,add=T)
+
+# Calculate forest area within buffer
+buffer.forest1.1km <- crop(forest, buffer.site1.1km)
+buffer.forest1.1km <- mask(buffer.forest1.1km, buffer.site1.1km)
+
+# Plot forest within buffer
+plot(buffer.forest1.1km)
+
+# Calculate percent forest cover
+grainarea <- res(forest)[[1]]^2/10000 # pixel resolution ^2 and then convert the area into hectares
+forestcover1km <- global(buffer.forest1.1km, 'sum', na.rm=TRUE)*grainarea
+# forestcover1km
+
+bufferarea <- (3.14159*buf1km^2)/10000 # pi*r^2 
+percentforest1km <- forestcover1km/bufferarea*100
+# percentforest1km
+```
+
+```{r}
+# There are a total of 78 sites points
+BufferCover <- function(coords, size, landcover, grain){
+
+  bufferarea.i <- pi*size^2/10000
+  
+  buffer.i <- buffer(coords, width=size) # buffer
+  crop.i <- crop(landcover, buffer.i) # crop with raster function
+  crop.NA <- setValues(crop.i, NA) # empty raster for the rasterization
+  buffer.r <- rasterize(buffer.i, crop.NA) # rasterize buffer
+  land.buffer <- mask(x=crop.i, mask=buffer.r) # mask by putting NA outside the boundary
+  
+  coveramount<-as.numeric(global(land.buffer, 'sum', na.rm=TRUE)) * grain # calculate area
+  percentcover<-100*(coveramount/bufferarea.i) # convert to %
+
+  return(percentcover)
+}
+
+# Create empty vector for storing output
+f1km <- rep(NA, length = nrow(sites))
+f2km <- rep(NA, length = nrow(sites))
+
+# With for loop
+for(i in 1:nrow(sites)) {
+  f1km[i] <- BufferCover(coords=sites[i,],size=1000,landcover=forest,grain=grainarea)
+  f2km[i] <- BufferCover(coords=sites[i,],size=2000,landcover=forest,grain=grainarea)
+  #print(i)
+}
+
+# Make a data frame
+forest.scale <- data.frame(
+  site=sites$site,
+  x=sites$coords_x1, 
+  y=sites$coords_x2,
+  f1km=f1km, f2km=f2km)
+
+# Plot
+plot(f1km, f2km, xlab="Forest cover 1 km (%)", ylab="Forest cover 2 km (%)")
+text(f1km, f2km, labels=sites$site, pos=4, cex=0.5, col="black")
+```
+
+```{r}
+# Load reptile survey data
+flsk <- read.csv("/Users/colelacroix/Documents/Lab1_data/reptiles_flsk.csv", header=T)
+
+# Merge reptile data with forest cover data by site ID
+flsk <- merge(flsk, forest.scale, by="site", all=F)
+print(flsk)
+
+# glms across scales
+# Formula: response variable pres (presence/absence) is explained by predictor f1km or f2km.
+# Tells R that the response variable is binary (0/1, yes/no, presence/absence).
+pres.1km <- glm(pres ~ f1km, family = "binomial", data = flsk) 
+pres.2km <- glm(pres ~ f2km, family = "binomial", data = flsk)
+
+# Summary information
+summary(pres.1km); summary(pres.2km)
+
+# Likelihoods
+logLik(pres.1km); logLik(pres.2km)
+
+# Coefficients
+pres.1km.ci <- confint(pres.1km)
+pres.2km.ci <- confint(pres.2km)
+pres.1km.ci; pres.2km.ci
+```
+```{r}
+
+```
+
+
+
+
+
