@@ -1,0 +1,204 @@
+---
+title: "03 - Scaling"
+author: "Cole LaCroix"
+date: "2025-10-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#install packages if not already installed
+if(!require(geoR)) install.packages("geoR")
+if(!require(spdep)) install.packages("spdep")
+if(!require(gstat)) install.packages("gstat")
+if(!require(pgirmess)) install.packages("pgirmess")
+if(!require(ncf)) install.packages("ncf")
+
+#load required packages
+library(geoR)
+library(spdep)      
+library(gstat)
+library(pgirmess)
+library(ncf)
+library(here)
+library(ggplot2)
+library(patchwork)   
+library(viridis) 
+```
+
+```{r}
+# load the matrix data into R
+matrix <- read.csv(here("cactus_matrix.csv"), header = T)
+head(matrix)
+```
+
+```{r}
+# plot the data
+plot(
+  matrix[,"y"]~matrix[,"x"], # plot based on coodinates
+     pch=21, # use point character 21 (a circle that can be filled)
+  bg=gray.colors(12)[ # fill color of the circles comes from 12 shades of gray
+    cut(matrix[,3],breaks = 12)  # divide the 3rd column of matrix into 12 groups (bins),
+    ]
+  )
+```
+
+```{r}
+# bind the x and y coordinate vectors from `matrix` into a 2-column matrix
+coords <- cbind(matrix$x,matrix$y)
+
+# name the two columns for clarity
+colnames(coords) <- c("x", "y")
+
+# Moran's I calculation
+correlog.pgirmess <- pgirmess::correlog(
+  coords, matrix$Height, 
+  method = "Moran", 
+  nbclass = 14, 
+  alternative = "two.sided"
+)
+
+# summary
+head(round(correlog.pgirmess, 2))
+```
+
+```{r}
+# dist.class reflects the center of each bin
+# coef shows the Moran coefficient for that distance
+# n is the sample size for that distance (number of pairs of location used)
+
+# plot the correlogram
+plot(correlog.pgirmess[, "dist.class"], # selects the column "dist.class" from the object
+     correlog.pgirmess[, "coef"], # selects the column "coef" from the object
+     type = "b", pch = 19, # both points and lines are drawn; specifies the plotting symbol: a solid filled circle.
+     xlab = "Distance class", # sets the label for the x-axis
+     ylab = "Moran's I") # sets the label for the y-axis
+
+# Add horizontal line at 0
+abline(h = 0, lty = 2)
+```
+
+```{r}
+# create a geoR object
+geo.veg <- as.geodata(matrix)
+
+# maximum distance to consider in correlogram/variogram
+distmat <- as.matrix(dist(coords))
+maxdist <- 2/3 * max(distmat)
+
+par(mfrow = c(1,2))
+
+# empirical semivariogram
+emp.geoR <- variog(geo.veg, max.dist = maxdist)
+```
+
+
+```{r}
+plot(emp.geoR)
+
+# standardize break points to a minumum 10-m lag distance
+emp.geoR_v1 <- variog(geo.veg, max.dist = maxdist,
+                   breaks = c(seq(0,maxdist,by=10)))
+```
+
+```{r}
+plot(emp.geoR_v1)
+```
+
+```{r}
+# exponential variogram
+mlexp <- likfit(geo.veg, cov.model = "exp", ini = c(700,10))
+```
+
+```{r}
+# spherical variogram
+mlsph <- likfit(geo.veg, cov.model = "sph", ini = c(700,10))
+```
+
+```{r}
+# model comparison
+AIC(mlexp,mlsph)
+```
+
+```{r}
+# grid with 1-unit intervals (1-m)
+new.grid.1m <- expand.grid(0:max(matrix$x), 0:max(matrix$y))
+
+# kriging: krige.control, cov.pars: partial sill, range
+krig.geoR.exp <- krige.conv( # call the function krige.conv() from the geoR package, which performs kriging prediction (ordinary or simple kriging)
+  geo.veg,
+  locations = new.grid.1m, # specifies the prediction locations where kriging estimates should be calculated
+  krige = krige.control(
+    cov.pars = c(mlexp$cov.pars[1], # partial sill (variance explained by spatial structure)
+                 mlexp$cov.pars[2]), # range (distance where spatial correlation drops off)
+                 nugget = mlexp$nugget, # nugget effect (measurement error or micro-scale variation)
+                 cov.model = "exp", # specify the covariance (variogram) model; here it is exponential
+                 type.krige = "OK")) # specify the type of kriging: "OK" = Ordinary Kriging
+```
+
+```{r}
+# extract predictions and SE into a dataframe
+krig_df <- data.frame(
+  x = new.grid.1m[,1],
+  y = new.grid.1m[,2],
+  pred = krig.geoR.exp$predict,
+  se   = sqrt(krig.geoR.exp$krige.var)
+)
+
+# raw data plot (points colored by observed values)
+p1 <- ggplot(data.frame(x=geo.veg$coords[,1], 
+                        y=geo.veg$coords[,2],
+                        z=geo.veg$data),
+             aes(x, y, fill=z)) +
+  geom_point(shape=21, size=1, color="black") +
+  scale_fill_viridis(name=NULL, option="D") +
+  coord_equal() +
+  labs(title="Observed Data") +
+  theme_minimal(base_size = 12) +
+  theme(
+  plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+  axis.text = element_text(size = 9),
+  axis.title = element_text(size = 10)
+)
+
+# kriged estimates plot
+p2 <- ggplot(krig_df, aes(x, y, fill=pred)) +
+  geom_tile() +
+  scale_fill_viridis(name=NULL, option="C") +
+  coord_equal() +
+  labs(title="Kriged Estimates") +
+  theme_minimal(base_size = 12) +
+  theme(
+  plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+  axis.text = element_text(size = 9),
+  axis.title = element_text(size = 10)
+)
+
+# kriging SE plot
+p3 <- ggplot(krig_df, aes(x, y, fill=se)) +
+  geom_tile() +
+  scale_fill_viridis(name=NULL, option="B") +
+  coord_equal() +
+  labs(title="Kriging SE") +
+  theme_minimal(base_size = 12) +
+  theme(
+  plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+  axis.text = element_text(size = 9),
+  axis.title = element_text(size = 10)
+)
+
+# combine all three in one row
+p1 + p2 + p3
+```
+
+```{r}
+
+```
+
+
+
+
+
