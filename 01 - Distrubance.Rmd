@@ -114,6 +114,8 @@ ggplot(df_agent_filtered, #use the filtered disturbance agent dataframe
 ```
 Exercise. Q1. The figure above shows the relative proportions of disturbance agents in 2022. Which disturbance agent appears most common in Raleigh–Durham, and why do you think this type of disturbance might be frequent there?
 
+The figure above indicates that logging is far and away the leading distrubance in the area. I'm assuming that this is because there is a larger timber market here and because an area that can be logged can also be replanted and grown for another harvest 30 years later. Because of this rotation, a larger amount of area can be distrubed every year without it being a conversion of use like construction. Once construction occurs in an area, it is rarely 'reversed'. 
+
 
 ```{r}
 #extract and clean disturbance raster values (2022)
@@ -170,6 +172,7 @@ ggplot(vals_filtered, aes(x = agent_label, fill = factor(severity_2022_value))) 
 ```
 Exercise. Q2-1. The figure shows the severity distribution of different disturbance agents in 2022. Which disturbance agent tends to cause the most severe disturbances, and which shows more low-severity events? What ecological reasons might explain this difference?
 
+It appears that the wind/geohazard category has the highest disturbance intensity level with what appears to be 100% level 4 severity. This is likely because of the type of distruction that earthquakes and tornadoes cause when they do infrequently occur. I would anticipate that the need to disturb the area happens long after the initial event as well because of the need for clean up. Interestingly, water disturbance seems to have the lowest severity rating. I guess this is because of the range of severity water distrubances can occur at. While some distrubances can be very strong (similar to an earth quake), others might simple result in ground saturation for a number of days or weeks. 
 
 ```{r}
 ggplot(vals_filtered, 
@@ -188,6 +191,8 @@ ggplot(vals_filtered,
 ```
 
 Exercise. Q2-2. The figure shows the Day of Year (DOY) distribution of different disturbance agents in 2022. Which disturbance agents tend to occur early in the year, and which occur late in the year? What ecological or human processes might explain these seasonal patterns?
+
+Water and wind/geohazard both appear to occur in the early/mid summer time. This likely indicates a season of most intense story severity. After that, stress and agricultural distrubance both occur near the end of the year. Stress might be due to a dryer portion of the year (water disturbance appears to be low for a long period before that). The agricultural disturbance is likely due to the final harvest of the year before the growing season ends. 
 
 ```{r}
 #read disturbance data across multiple years (1988–2022)
@@ -323,9 +328,21 @@ ggplot(doy_df,
   theme_minimal(base_size = 14) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
+Exercise. Q1. The figure above shows the relative proportions of disturbance agents in 2022. Which disturbance agent appears most common in Raleigh–Durham, and why do you think this type of disturbance might be frequent there?
+
+The figure above indicates that logging is far and away the leading distrubance in the area. I'm assuming that this is because there is a larger timber market here and because an area that can be logged can also be replanted and grown for another harvest 30 years later. Because of this rotation, a larger amount of area can be distrubed every year without it being a conversion of use like construction. Once construction occurs in an area, it is rarely 'reversed'. 
+
+Exercise. Q2-1. The figure shows the severity distribution of different disturbance agents in 2022. Which disturbance agent tends to cause the most severe disturbances, and which shows more low-severity events? What ecological reasons might explain this difference?
+
+It appears that the wind/geohazard category has the highest disturbance intensity level with what appears to be 100% level 4 severity. This is likely because of the type of distruction that earthquakes and tornadoes cause when they do infrequently occur. I would anticipate that the need to disturb the area happens long after the initial event as well because of the need for clean up. Interestingly, water disturbance seems to have the lowest severity rating. I guess this is because of the range of severity water distrubances can occur at. While some distrubances can be very strong (similar to an earth quake), others might simple result in ground saturation for a number of days or weeks. 
+
+Exercise. Q2-2. The figure shows the Day of Year (DOY) distribution of different disturbance agents in 2022. Which disturbance agents tend to occur early in the year, and which occur late in the year? What ecological or human processes might explain these seasonal patterns?
+
+Water and wind/geohazard both appear to occur in the early/mid summer time. This likely indicates a season of most intense story severity. After that, stress and agricultural distrubance both occur near the end of the year. Stress might be due to a dryer portion of the year (water disturbance appears to be low for a long period before that). The agricultural disturbance is likely due to the final harvest of the year before the growing season ends. 
+
 Exercise. Q3. How do trends, severity, and seasonality together help us understand disturbance dynamics?
 
-
+Trends might help us see if actions we are taking are lessening or perpetuating a distrubance type. Severity might help us see if the efforts we make to mitigate impacts is effective (ie, disincentivizing high-grading in forestry). Seasonality might help us understand the greatest source of the disturbance and whether or not it's human related. Together, we begin to understand the full nature of the disturbances, our ability to address them and forcast them. 
 
 
 
