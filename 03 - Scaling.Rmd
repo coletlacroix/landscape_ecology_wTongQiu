@@ -45,6 +45,8 @@ plot(
     ]
   )
 ```
+Exercise Q1. Based on the plotting we learned from Lab1_disturbance, could you visualize the data in other way (including code and plot)?
+
 
 ```{r}
 # bind the x and y coordinate vectors from `matrix` into a 2-column matrix
@@ -81,6 +83,14 @@ plot(correlog.pgirmess[, "dist.class"], # selects the column "dist.class" from t
 abline(h = 0, lty = 2)
 ```
 
+Exercise Q2 The plot above shows a Moran’s I correlogram for cactus height. (1) What does the positive Moran’s I at small distance classes indicate? (2) At what distance does the spatial autocorrelation become negligible or negative, and what ecological processes might explain this shift?
+
+Exercise Q3 Does the Moran’s I curve intercept the y-axis? If not, explain why.
+
+Exercise Q4 Many R packages can be used to calculate Moran’s I. Try using another one (e.g., ncf, ape, spatialreg) to calculate Moran’s I, and then compare it with the plot derived from the spdep package in a single figure.
+par(mfrow = c(1,2)) plot(…) plot(…)
+
+
 ```{r}
 # create a geoR object
 geo.veg <- as.geodata(matrix)
@@ -107,6 +117,8 @@ emp.geoR_v1 <- variog(geo.veg, max.dist = maxdist,
 ```{r}
 plot(emp.geoR_v1)
 ```
+Exercise Q5 How to interpret the above semivariances?
+
 
 ```{r}
 # exponential variogram
@@ -122,6 +134,8 @@ mlsph <- likfit(geo.veg, cov.model = "sph", ini = c(700,10))
 # model comparison
 AIC(mlexp,mlsph)
 ```
+
+Exercise Q6 Which model is better (based on the statistical results) and why? mlexp or mlsph?
 
 ```{r}
 # grid with 1-unit intervals (1-m)
@@ -194,11 +208,7 @@ p3 <- ggplot(krig_df, aes(x, y, fill=se)) +
 p1 + p2 + p3
 ```
 
-```{r}
-
-```
-
-
+Exercise Q7 After generating the kriging predictions and plotting both the estimated surface and the prediction standard errors (SE), compare the two plots and answer the following questions: (1) Where in the spatial domain are the SE highest? (2) Why SE is larger in those areas compared to others? (3) How would increasing the number or density of sampling points affect the kriging SE map?
 
 
 
