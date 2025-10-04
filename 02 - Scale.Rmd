@@ -244,11 +244,17 @@ pres.1km.ci <- confint(pres.1km)
 pres.2km.ci <- confint(pres.2km)
 pres.1km.ci; pres.2km.ci
 ```
-```{r}
+Exercise. Q1. What does this code create (please choose one option below)?
 
-```
+When we run: toy <- rast(ncol = 6, nrow = 6, xmin = 1, xmax = 6, ymin = 1, ymax = 6)
+
+Answer - b: A raster with 6 rows × 6 columns, spanning coordinates from 1 to 6 in both x and y directions
 
 
+Exercise. Q2. Estimates of forest cover can vary depending on the buffer size (scale) used. In your opinion, under what circumstances would a small-scale measure of forest cover better explain species distributions, and when would a larger-scale measure be more appropriate? Discuss your reasoning in relation to the concept of scale dependence in ecology.
 
+Different buffer scales are appropriate in different circumstances. A very large buffer might be appropriate when evaluating the effect of a nationwide policy regarding general forest preservation. A smaller buffer might be appropriate when evaluating the effect of that same policy on a particular forest community type. A very small buffer might be appropriate when evaluating the extent of a species occupying a particular niche within a forest community type. Or, when evaluating the impact of microclimates on forest growth. 
 
+Exercise. Q3. Two regression models relating prey presence to forest cover within 1 km and 2 km buffers. Interpret the coefficients and significance of each model. Which model provides a better fit to the data, and why?
 
+Both models show positive correlations between forest cover and reptile presence. The likelihood of reptile presence increases at both scales. However, the 2km scale has a steeper slope (1km = .072, 2km = .085) which indicates better responsiveness to the variable. Additionally, the 'log lik' of 1km is -33.81059 (df=2) and 2km 'log Lik.' is -31.3621 (df=2) which indicates that 2km is a better fit because the value is higher.
