@@ -46,7 +46,7 @@ plot(
   )
 ```
 Exercise Q1. Based on the plotting we learned from Lab1_disturbance, could you visualize the data in other way (including code and plot)?
-
+(scroll to bottom for answers)
 
 ```{r}
 # bind the x and y coordinate vectors from `matrix` into a 2-column matrix
@@ -133,6 +133,9 @@ mlsph <- likfit(geo.veg, cov.model = "sph", ini = c(700,10))
 ```{r}
 # model comparison
 AIC(mlexp,mlsph)
+summary(mlexp)
+summary(mlsph)
+
 ```
 
 Exercise Q6 Which model is better (based on the statistical results) and why? mlexp or mlsph?
@@ -210,5 +213,68 @@ p1 + p2 + p3
 
 Exercise Q7 After generating the kriging predictions and plotting both the estimated surface and the prediction standard errors (SE), compare the two plots and answer the following questions: (1) Where in the spatial domain are the SE highest? (2) Why SE is larger in those areas compared to others? (3) How would increasing the number or density of sampling points affect the kriging SE map?
 
+------------
 
+Exercise Q1. Based on the plotting we learned from Lab1_disturbance, could you visualize the data in other way (including code and plot)?
+```{r}
+summary(matrix)
 
+## Binned heatmap of mean height (5 m bins)
+ggplot(matrix, aes(x, y, z = Height)) +
+  stat_summary_2d(fun = mean, bins = 30) +
+  scale_fill_viridis(option = "C", name = "Mean height") +
+  coord_equal() +
+  labs(title = "Mean cactus height by 2D bins") +
+  theme_minimal()
+
+```
+
+Exercise Q2 The plot above shows a Moran’s I correlogram for cactus height. (1) What does the positive Moran’s I at small distance classes indicate? (2) At what distance does the spatial autocorrelation become negligible or negative, and what ecological processes might explain this shift?
+
+Q2 Answer: A positive Moran's I at short distances indicates that nearby plants have similar heights which means that they have a positive spatial autocorrelation. This probably means that they experience similar growing conditions and thus grow to similar heights. The Moran's I goes negative (slightly) at around the 15 distance mark. This is where the similarity in height disapears. Because it goes slightly negative, it may mean that this landscape experiences patch-gap patterns meaning limited resources create gaps between communities due to competition. 
+
+Exercise Q3 Does the Moran’s I curve intercept the y-axis? If not, explain why.
+
+Q3 Answer: No there is no y intercept because Moran's I is meant to display correlations between multiple objects at various distances. If an object was on the Y intercept, the only thing that it could compare itself to would be itself. This wouldn't tell us anything about spatial relationships. 
+
+Exercise Q4 Many R packages can be used to calculate Moran’s I. Try using another one (e.g., ncf, ape, spatialreg) to calculate Moran’s I, and then compare it with the plot derived from the spdep package in a single figure.
+par(mfrow = c(1,2)) plot(…) plot(…)
+
+Q4 Answer: When both of the plots are side by side (see below) they are clearly very similar but still display some slight differences. From what chat is telling me, this has to do wit the say they are implemented with binning, pair-weighting, and distance standardization. 
+
+```{r}
+coords <- cbind(matrix$x, matrix$y)
+
+# Compute both correlograms from scratch
+correlog.pgirmess <- pgirmess::correlog(coords, matrix$Height,
+                                        method="Moran", nbclass=14,
+                                        alternative="two.sided")
+z <- as.data.frame(correlog.pgirmess)
+
+inc <- max(dist(coords)) / 14
+cor_ncf <- ncf::correlog(x = matrix$x, y = matrix$y, z = matrix$Height,
+                         increment = inc, resamp = 0)
+
+# both plots
+par(mfrow = c(1,2))
+plot(z$dist.class, z$coef, type="b", pch=19,
+     xlab="Distance class", ylab="Moran's I", main="pgirmess::correlog")
+abline(h = 0, lty = 2)
+
+plot(cor_ncf$mean.of.class, cor_ncf$correlation, type="b", pch=19,
+     xlab="Distance class", ylab="Moran's I", main="ncf::correlog")
+abline(h = 0, lty = 2)
+par(mfrow = c(1,1))
+
+```
+Exercise Q5 How to interpret the above semivariances?
+
+Q5 Answer: The semivariances look very similar. It appears that one has more available data than the other because a distance requirement was programmed into one of them. This make fewer points available for interpretation on one compared to the other. The one with more data represented is easier to see where the nugget (900, 1100), sill (1250, 1250), range (12, 15), monotonic rise (25, none?) occur. 
+
+Exercise Q6 Which model is better (based on the statistical results) and why? mlexp or mlsph?
+
+Q6 Answer: The exponential model has a smaller AIC which indicates a better fit though the difference is very small. This is likely because the expoential models change gradually over the distance as one would expect based on the semivariograms we already analyzed. The spherical model would probably suite stronger binary patch relationships where values quickly drop to zero. 
+
+Exercise Q7 After generating the kriging predictions and plotting both the estimated surface and the prediction standard errors (SE), compare the two plots and answer the following questions: (1) Where in the spatial domain are the SE highest? (2) Why SE is larger in those areas compared to others? (3) How would increasing the number or density of sampling points affect the kriging SE map?
+
+Q7 Answer: It appears from the plots that there is pretty even distribution of SE. Areas with yellow are high SE. Dark areas are low SE. This would indicate that there is a similar amount of uncertainty everywhere assuming that it is because there are evenly spaced sampling points. It could also be because the variation that is occuring is random and does not share spatial distribution or structure.  
