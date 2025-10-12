@@ -43,7 +43,7 @@ point.data <- read.csv('/Users/GitHub Projects/landscape_ecology_wTongQiu/Lab4_d
 coords <- cbind(point.data$EASTING, point.data$NORTHING)
 
 # load the elevation data
-elev <- rast(here("Lab4_data", "elev.grd"))
+elev <- rast('/Users/GitHub Projects/landscape_ecology_wTongQiu/Lab4_data/elev.grd')
 
 # create aspect and slope layers from the elevation layer
 elev.terr <- terrain(elev, 
@@ -77,7 +77,7 @@ VATH.all <- glm(VATH ~ elevs + slopes + aspects, family = "binomial", data = poi
 VATH.elev2 <- glm(VATH ~ elev + I(elev^2), family = "binomial", data= point.data)
 
 # contract model fit using AIC
-#round(AIC(VATH.elev, VATH.all, VATH.elev2), 2)
+round(AIC(VATH.elev, VATH.all, VATH.elev2), 2)
 ```
 
 ```{r}
