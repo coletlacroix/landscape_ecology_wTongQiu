@@ -1,0 +1,147 @@
+---
+title: "05 - LandscapeMetrics"
+author: "Cole LaCroix"
+date: "2025-10-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# set CRAN mirror (important when knitting)
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+#install packages if not already installed
+if(!require(here)) install.packages("here")
+if(!require(terra)) install.packages("terra")
+if(!require(sf)) install.packages("sf")
+if(!require(landscapemetrics)) install.packages("landscapemetrics")
+
+#load required packages
+library(here)
+library(terra)
+library(sf)
+library(landscapemetrics)
+```
+
+```{r}
+# internal data needs to be read
+landscape <- terra::rast(landscapemetrics::landscape)
+augusta_nlcd <- terra::rast(landscapemetrics::augusta_nlcd)
+podlasie_ccilc <- terra::rast(landscapemetrics::podlasie_ccilc)
+
+# landscape: An example map to show landscapemetrics functionality generated with the nlm_randomcluster() algorithm.
+# augusta_nlcd: A real landscape of area near Augusta, Georgia obtained from the National Land Cover Database (NLCD). 
+# podlasie_ccilc: A real landscape of the Podlasie region in Poland from the ESA CCI Land Cover.
+```
+
+
+```{r}
+# general structure
+#lsm_"level"_"metric"
+
+# Patch level
+## lsm_p_"metric"
+lsm_p_enn()
+
+# Class level
+## lsm_c_"metric"
+lsm_c_enn()
+
+# Landscape level
+## lsm_p_"metric"
+lsm_l_enn()
+```
+```{r}
+# import raster
+# for local file: rast("pathtoyourraster/raster.asc")
+# ... or any other raster file type, geotiff, ...
+
+# Check your landscape
+check_landscape(landscape) # because CRS is unknown, not clear
+
+check_landscape(podlasie_ccilc) # wrong units
+
+check_landscape(augusta_nlcd) # everything is ok
+```
+
+```{r}
+# import raster
+# for local file: rast("pathtoyourraster/raster.asc")
+# ... or any other raster file type, geotiff, ...
+
+# Calculate e.g. perimeter of all patches
+lsm_p_perim(landscape)
+```
+```{r}
+# calculate certain metrics
+# list aggregation metrics at landscape level and just return function name
+list_lsm(level = "landscape", 
+         type = "aggregation metric", 
+         simplify = TRUE)
+
+# you can also combine arguments and only return the function names
+list_lsm(level = c("patch", "landscape"), 
+         type = "core area metric", 
+         simplify = TRUE)
+```
+```{r}
+# calculate certain metrics
+calculate_lsm(landscape, 
+              what = c("lsm_c_pland", "lsm_l_ta", "lsm_l_te"))
+
+# calculate all aggregation metrics on patch and landscape level
+calculate_lsm(landscape, 
+              type = "aggregation metric", 
+              level = c("patch", "landscape"))
+
+# show full information of all metrics
+calculate_lsm(landscape, 
+              what = c("lsm_c_pland", "lsm_l_ta", "lsm_l_te"),
+              full_name = TRUE) ##compare with full_name = FALSE
+```
+
+```{r}
+# A real landscape of area near Augusta, Georgia obtained from the National Land Cover Database (NLCD)
+plot(augusta_nlcd)
+```
+
+```{r}
+# if we have a plot with the following coordinate
+sample_points <- vect(x = data.frame(x = 1255000, y = 1250000), geom = c('x', 'y'), crs = crs(augusta_nlcd))
+
+# we can quantify Shannon’s diversity index around this location
+shdi = sample_lsm(augusta_nlcd,
+                  y = sample_points,
+                  size = 1000,
+                  what = "lsm_l_shdi") 
+shdi
+```
+
+```{r}
+# make grid based on the land cover data
+grid_geom = st_make_grid(st_as_sfc(st_bbox(augusta_nlcd)), cellsize = 1500) ##this can be adjusted
+
+grid = st_sf(geom = grid_geom)
+
+# now overlay the newly created grid on top of the input raster
+plot(augusta_nlcd)
+plot(grid, add = TRUE)
+```
+
+```{r}
+shdi = sample_lsm(augusta_nlcd, grid,
+                       level = "landscape", metric = "shdi")
+shdi
+```
+
+```{r}
+grid = dplyr::bind_cols(grid, shdi)
+plot(grid['value'])
+```
+
+
+
+
