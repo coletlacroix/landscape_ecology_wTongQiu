@@ -2,7 +2,9 @@
 title: "04 - Scaled"
 author: "Cole LaCroix"
 date: "2025-10-08"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -13,19 +15,8 @@ knitr::opts_chunk$set(echo = TRUE)
 # set CRAN mirror (important when knitting)
 options(repos = c(CRAN = "https://cloud.r-project.org"))
 
-#install packages if not already installed
-if(!require(here)) install.packages("here")
-if(!require(terra)) install.packages("terra")
-if(!require(spdep)) install.packages("spdep")
-if(!require(pgirmess)) install.packages("pgirmess")
-if(!require(mgcv)) install.packages("mgcv")
-
-install.packages(
-  "INLA",
-  repos = c("https://inla.r-inla-download.org/R/stable", getOption("repos")),
-  type = "binary"
-)
 ```
+
 ```{r}
 #load required packages
 library(here)
@@ -34,7 +25,9 @@ library(spdep)
 library(pgirmess)
 library(mgcv)
 library(INLA)
+library(spatialEco)
 ```
+
 ```{r}
 # load the bird counts survey data
 point.data <- read.csv('/Users/GitHub Projects/landscape_ecology_wTongQiu/Lab4_data/vath_2004.csv', header = T)
@@ -84,8 +77,10 @@ round(AIC(VATH.elev, VATH.all, VATH.elev2), 2)
 # create new data covering the full elevation range
 # new, evenly spaced sequence of elevation values
 # this allows you to compute smooth, model-based predictions across the entire elevation gradient
-elev <- seq(min(point.data$elev), max(point.data$elev), length = 15)
-newdata <- data.frame(elev = elev)
+# create new data covering the full elevation range
+elev_seq <- seq(min(point.data$elev), max(point.data$elev), length = 15)
+newdata  <- data.frame(elev = elev_seq)
+
 
 # predicting and computing uncertainty
 # type = "link" gives predictions on the logit (linear) scale, not yet as probabilities
@@ -249,6 +244,60 @@ gam.pred <- terra::predict(predictors, VATH.gam, type = "response")
 plot(gam.pred, main = "GAM",
      xlab = "Longitude", ylab = "Latitude")
 ```
+
+Exercise Q1. Could you use the terrain function to calculate the Topographic Position Index (TPI) and visualize it in a similar way to the plot above (i.e., TPI with Bird Survey Points)?
+
+```{r}
+# exactly your look: 9x9 rectangle, scale = 45
+tpi_result <- spatialEco::tpi(elev, scale = 45, win = "rectangle")
+plot(tpi_result, main = "Topographic Position Index")
+points(coords, pch = 10, cex = 0.8, col = "red")
+
+```
+
+
+
+Exercise Q2. Based on AIC and summary, which model performs best (VATH.elev, VATH.all, or VATH.elev2)? why?
+
+AIC measure the fit of a model with a penalty for complexity. Lower AIC indicates that a model has a better combination of fit and complexity. VATH.elev2 has the lowest AIC. This is interesting because adding slope and aspect didn't help the VATH.all perform better than the quadratic term did. Adding this term allows the model to describe a non-linear relationship. 
+
+
+
+Exercise Q3. Based on the elevation–occurrence relationship and the Moran’s I correlogram, what do these results suggest about how elevation (left panel) and distance (right panel) influence the species’ occurrence?
+
+On the Occurrence vs Elevation graph, a distinct bell curve forms around the 1.2 km elevation then tapers down in either direction. This indicates that the bird's occurrence increases with elevation to a point then tapers down as habitat suitability decreases (this could be related to changes in forest type, cold, etc.). This means there apperas to be an optimal elevation for them. Regarding the Moran's I correlogram, the graph indicates that there is spatial autocorrelation, meaning that there is greater likelihood of occurrence base on proximity to another occurrence. The graph remains positive till about 100km distance. This means that without using spatial models, we might not get the best model fit. 
+
+
+Exercise Q4 Please briefly describe your understanding of the above introduced models (i.e., trend surface, GAM, and CAR) and which you would prefer for your potential future spatial modeling project and why?
+
+Trend Surface Model - This model adds polynomials of spatial coordinates to the regression to capture spatial gradients. In the case of our model, it improved the AIC. However, using the coordinates in this way is more useful for modeling very large-scale spatial dependencies. It is not as sensitive to local autocorrelation. 
+
+GAM - This model uses smoothers that generalize data into smooth curves through fitting to subsets of the data. This method has greater flexibility for capturing non-linear responses across geographic space. This model explain's 31% of deviance in the data, meaning it highlights strong spatial structure. 
+
+CAR - this model includes random spatial effects that consider local spatial dependence. When this effect is included, the elevation coefficients remain significant but shrink compared to non-spatial models. This likely means that part of the variation we thought was explained by elevation might actually be explained by spatial structure. 
+
+Because I anticipate that there could be random spatial effects in many data sets that i could use in a localized project, I could see myself using the GAM or CAR. 
+
+
+Exercise Q5 Which model appears to best remove spatial dependence from the residuals? Compare the estimated coefficients for elev and I(elev²) across the different models and describe how accounting for spatial dependence affects the magnitude and interpretation of these coefficients?
+
+Spatial autocorrelation in the residuals appears to decrease as spatial structure is added to the models. The intercept-only and elevation models have strong positive I's at shorter distances. Trend surface has less of a correlation but it's still there. GAM is pretty much flat meaning there is essentially no correlation even at short distances. CAR trends pretty closely with quadratic elevation. GAM seems best. 
+
+```{r}
+summary(VATH.elev2)$coefficients[c("elev", "I(elev^2)"), ]
+summary(VATH.trend)$coefficients[c("elev", "I(elev^2)"), ]
+
+summary(VATH.gam)$p.table[c("elev", "I(elev^2)"), ]
+
+VATH.inla$summary.fixed[c("elev", "I(elev^2)"), ]
+
+```
+Elevation had strong p values in the quadratic model. But, it got less strong in the GLM and GAM models while showing the same pattern. This shows that some of the effect of elevation was actually misrepresented and is more related to spatial auto correlation. When spatial structure is better accounted for, the impact of elevation becomes smaller and less certain. 
+
+
+Exercise Q6 Considering how each model consider spatial dependence, which model captures the most realistic spatial variation in occurrence probability, and why?
+
+The non-spatial model considers elevation only and likely ignores spatial conitnuity making things look patchy and rigid. The TSM adds polynomials for Easting and Norhting but is likely oversimplified and doesnt account for local structure well. the GAM smoothes for flexibility in local spatial patterns and captures fine scale patterns that are seen in the bird observations. This means that the GAM provides the best estimation of spatial variation and better acounts for ecological gradients and local clustering. 
 
 
 
