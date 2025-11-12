@@ -2,7 +2,9 @@
 title: "05 - LandscapeMetrics"
 author: "Cole LaCroix"
 date: "2025-10-15"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -24,6 +26,7 @@ library(here)
 library(terra)
 library(sf)
 library(landscapemetrics)
+library(dplyr)
 ```
 
 ```{r}
@@ -38,22 +41,6 @@ podlasie_ccilc <- terra::rast(landscapemetrics::podlasie_ccilc)
 ```
 
 
-```{r}
-# general structure
-#lsm_"level"_"metric"
-
-# Patch level
-## lsm_p_"metric"
-lsm_p_enn()
-
-# Class level
-## lsm_c_"metric"
-lsm_c_enn()
-
-# Landscape level
-## lsm_p_"metric"
-lsm_l_enn()
-```
 ```{r}
 # import raster
 # for local file: rast("pathtoyourraster/raster.asc")
@@ -140,6 +127,157 @@ shdi
 ```{r}
 grid = dplyr::bind_cols(grid, shdi)
 plot(grid['value'])
+```
+
+## Exercise Q1. Please select two metrics at each of the three levels and describe their potential usage in your field.
+
+My relevant field would probably be forestry. Here are the metrics I've chosen for that field based on the relevant scale:
+
+Patch:
+
+Area - The area of patched sizes influenced the biodiversity and microclimate of the particular patch. It also has management implications. Larger patches are often better at sustaining Stable interior conditions.
+
+Core area - Core areas often experience different climates and environmental interactions than do edges. By measuring the amount of core area in a forest we can estimate how much of a forested area is experiencing or not experiencing certain edge conditions.
+
+Class:
+
+Patch Density - Patch density can help describe how fragmented a given forest type is across the landscape. You can detect how different management regimes or disturbance regimes might be breaking up the continuous cover of the forest into smaller stands.
+
+Edge Density - This metric quantifies the total edge per unit area of that class. High edge density means that any particular class might be more exposed to external influences like wind and sunlight and invasive species.
+
+Landscape:
+
+Shannon’s Diversity Index - This metric measures the diversity of land cover types. A high index score would indicate A heterogeneous landscape while a low value would indicate the dominance of a single cover type. By using this index we can try to quantify habitat diversity and make estimations about managed or naturally mosaic forest patterns.
+
+Patch Size Coefficient of Variation - This metric captures the variability in patch size and can give us a good idea of the complexity or uniformity of a landscape.
+
+
+## Exercise Q2. Please provide results of the selected two metrics at each of the three levels.
+
+```{r}
+x <- terra::rast(landscapemetrics::augusta_nlcd)
+x <- as.factor(x)  # ensure categorical
+
+x <- terra::project(x, "EPSG:32617")
+
+edge_buf_m <- 100
+
+# Patch-level 
+patch_area <- lsm_p_area(x)
+patch_core <- lsm_p_core(x, edge_depth = edge_buf_m)
+
+# Class-level
+class_pd <- lsm_c_pd(x)
+class_ed <- lsm_c_ed(x)
+
+# Landscape-level 
+land_shdi <- lsm_l_shdi(x)
+land_area_cv <- lsm_l_area_cv(x)
+
+cat("\n==== PATCH: AREA (first 10 rows) ====\n")
+print(utils::head(patch_area, 10))
+
+cat("\n==== PATCH: CORE AREA (first 10 rows) ====\n")
+print(utils::head(patch_core, 10))
+
+cat("\n==== CLASS: PATCH DENSITY (all classes) ====\n")
+print(class_pd)
+
+cat("\n==== CLASS: EDGE DENSITY (all classes) ====\n")
+print(class_ed)
+
+cat("\n==== LANDSCAPE: SHANNON DIVERSITY (SHDI) ====\n")
+print(land_shdi)
+
+cat("\n==== LANDSCAPE: PATCH SIZE COEFFICIENT OF VARIATION (AREA_CV) ====\n")
+print(land_area_cv)
+
+
+```
+
+
+## Exercise Q3. Select a different location, create a buffer and calculate the two metrics you have selected for each of the three levels. Then select a landscape-level metric and describe its spatial patterns across grids.
+
+```{r}
+
+# Load & prep
+x <- terra::rast(landscapemetrics::podlasie_ccilc)
+x <- as.factor(x)
+x <- terra::project(x, "EPSG:2180")   # meters for edge/length metrics
+
+edge_depth_val <- 100  # meters
+
+# ---- PATCH: AREA + CORE ----
+patch <- calculate_lsm(
+  x,
+  what = c("lsm_p_area", "lsm_p_core"),
+  edge_depth = edge_depth_val
+)
+
+cat("\nPATCH: AREA (first 10 rows):\n")
+print(utils::head(patch[patch$metric == "area", ], 10))
+
+cat("\nPATCH: CORE (first 10 rows):\n")
+print(utils::head(patch[patch$metric == "core", ], 10))
+
+# ---- CLASS: PATCH DENSITY + EDGE DENSITY ----
+classm <- calculate_lsm(
+  x,
+  what = c("lsm_c_pd", "lsm_c_ed")
+)
+
+cat("\nCLASS: PATCH DENSITY (PD):\n")
+print(classm[classm$metric == "pd", ])
+
+cat("\nCLASS: EDGE DENSITY (ED):\n")
+print(classm[classm$metric == "ed", ])
+
+# ---- LANDSCAPE: SHDI + AREA_CV ----
+land <- calculate_lsm(
+  x,
+  what = c("lsm_l_shdi", "lsm_l_area_cv")
+)
+
+cat("\nLANDSCAPE: SHANNON DIVERSITY (SHDI):\n")
+print(land[land$metric == "shdi", ])
+
+cat("\nLANDSCAPE: PATCH SIZE CV (AREA_CV):\n")
+print(land[land$metric == "area_cv", ])
+
+# Simple map like the lab
+plot(x, main = "Selected Landscape (EPSG:2180)")
+
+```
+
+```{r}
+# 1) Use Podlasie CCI land cover and project to meters (Poland CS92)
+x <- terra::rast(landscapemetrics::podlasie_ccilc)
+x <- as.factor(x)
+x <- terra::project(x, "EPSG:2180")   # meters
+
+# 2) Make an sf grid over the raster bbox (same style as the lab)
+grid_geom <- st_make_grid(
+  st_as_sfc(st_bbox(x)),  # bbox of the raster
+  cellsize = 2000         # adjust if you want coarser/finer cells
+)
+grid <- st_sf(geom = grid_geom)
+
+# (Optional) visualize grid over the raster, like the lab
+# plot(x)
+# plot(grid, add = TRUE)
+
+# 3) Sample SHDI per grid polygon (lab-style call)
+shdi <- sample_lsm(
+  landscape = x,
+  y         = grid,
+  level     = "landscape",
+  metric    = "shdi"
+)
+
+# 4) Bind and plot exactly like the lab
+grid <- dplyr::bind_cols(grid, shdi)
+plot(grid["value"])
+
 ```
 
 
