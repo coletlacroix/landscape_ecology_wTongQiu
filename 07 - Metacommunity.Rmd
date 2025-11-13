@@ -1,0 +1,599 @@
+---
+title: "07 - Metacommunity"
+author: "Cole LaCroix"
+date: "2025-11-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+title: "07 - Metacommunity"
+author: "Cole LaCroix"
+date: "2025-11-12"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE) 
+```
+
+```{r}
+# set CRAN mirror (important when knitting)
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+# install packages if not already installed
+if(!require(here)) install.packages("here")
+if(!require(terra)) install.packages("terra")
+if(!require(randomForest)) install.packages("randomForest")
+#Java Downloads from https://www.oracle.com/java/technologies/downloads/#jdk25-windows
+#choose installer
+if(!require(rJava)) install.packages("rJava")
+if(!require(dismo)) install.packages("dismo")
+if(!require(mgcv)) install.packages("mgcv")
+if(!require(ggplot2)) install.packages("ggplot2")
+if(!require(viridis)) install.packages("viridis")
+if(!require(fields)) install.packages("fields")
+
+# load required packages
+library(here)
+library(terra)
+library(randomForest)
+library(rJava)
+library(dismo)
+library(mgcv)
+library(ggplot2)
+library(viridis)
+library(fields)
+```
+
+```{r}
+vath.data <- read.csv(here("Lab7_data", "vath_2004.csv"), header=TRUE)
+vath.val <- read.csv(here("Lab7_data", "vath_VALIDATION.csv"), header=TRUE)
+
+#subset to presence-only / absence-only
+vath.pres <- vath.data[vath.data$VATH==1,]
+vath.abs <- vath.data[vath.data$VATH==0,]
+vath.pres.xy <- as.matrix(vath.pres[,c("EASTING","NORTHING")])
+vath.abs.xy <- as.matrix(vath.abs[,c("EASTING","NORTHING")])
+
+#validation data
+vath.val.pres <- as.matrix(vath.val[vath.val$VATH==1, c("EASTING","NORTHING")])
+vath.val.abs <- as.matrix(vath.val[vath.val$VATH==0, c("EASTING","NORTHING")])
+vath.val.xy <- as.matrix(vath.val[,c("EASTING","NORTHING")])
+```
+
+```{r}
+#covariate maps
+elev <- rast(here("Lab7_data", "elev.grd"))                 #elevation layer
+canopy <- rast(here("Lab7_data", "cc2.grd"))                #linear gradient in canopy cover taken from PCA
+mesic <- rast(here("Lab7_data", "mesic.grd"))               #presence of mesic forest
+precip <- rast(here("Lab7_data", "precip.grd"))             #mean precip
+
+
+#check maps
+# compareGeom(elev, canopy, stopOnError = TRUE)
+# compareGeom(elev, mesic, stopOnError = TRUE)
+# compareGeom(elev, precip, stopOnError = TRUE)
+
+#the maps do not align because their resolutions and spatial extents differ. As a result, they cannot be combined into a single raster stack. To resolve this, we need to resample the precipitation and mesic forest layers so that they match the resolution and extent of the elevation and canopy layers. 
+
+#resample to align layers
+mesic <- resample(x=mesic, y=elev, "near")          #nearest neighbor (categorical)
+precip <- resample(x=precip, y=elev, "bilinear")    #for continuous data
+
+#crop to same extent
+mesic <- mask(mesic, elev)
+precip <- mask(precip, elev)
+
+#check maps
+# compareGeom(elev,precip, mesic)
+
+#check the coordinate reference systems (CRS)
+# crs(elev)
+# crs(precip)
+# crs(mesic)
+crs(elev) <- crs(precip)
+
+#check maps agains
+# compareGeom(elev,precip, mesic)
+
+#create a 1-km circular moving window (kernel)
+fw.1km <- focalMat(mesic, 1000, type = "circle")           #this defines the neighborhood: all cells within 1 km of each focal cell will be included in the calculation
+mesic1km <- focal(mesic, w=fw.1km, fun="sum", na.rm=T)     #each output pixel represents the proportion (0–1) of mesic forest within a 1-km radius
+
+#create raster stack
+layers <- c(canopy, elev, mesic, mesic1km, precip)
+names(layers) <- c("canopy", "elev", "mesic", "mesic1km", "precip")
+
+#plot stack and correlations among covariates
+pairs(layers, maxpixels=1000)                          #maxpixels sets upper limit on sampling raster
+```
+
+```{r}
+#because mesic and mesic1km are highly correlated, we only consider mesic1km in further modeling
+#drop correlated layer (mesic)
+layers <- layers[[-3]]
+
+plot(layers)
+```
+
+
+```{r}
+if(!require(sf)) install.packages("sf")
+library(sf)
+
+
+#generate background points
+back.xy <- terra::spatSample(layers, xy=TRUE, size=2000, method = "random", na.rm = TRUE, as.points = TRUE)
+
+#back.xy <- st_coordinates(st_as_sf(back.xy))
+back.xy.env <- terra::extract(layers, back.xy)
+back.xy.cov <- st_coordinates(st_as_sf(back.xy))
+
+back.xy <- cbind(back.xy.cov, back.xy.env$canopy, 
+                 back.xy.env$elev, back.xy.env$mesic1km, 
+                 back.xy.env$precip)
+colnames(back.xy)[3:6] <- c('canopy', 'elev', 'mesic1km', 'precip')
+
+#inspect
+ head(back.xy)
+
+#plot (run together below)
+ plot(elev)
+ points(back.xy, col = "red", pch = 20, cex = 0.6)
+
+#extract covariates data
+pres.cov <- extract(layers, vath.pres.xy)          #extracts values from layers at pres locations
+val.cov <- extract(layers, vath.val.xy)            #extracts values from layers at validation locations
+
+#link data
+pres.cov <- data.frame(vath.pres.xy, pres.cov, pres=1)
+
+back.xy.df <- as.data.frame(back.xy)
+colnames(back.xy.df)[1:2] <- c("EASTING", "NORTHING")
+back.xy.df$pres <- 0
+back.cov <- back.xy.df
+val.cov <- data.frame(vath.val, val.cov)
+
+#remove any potential NAs
+pres.cov <- pres.cov[complete.cases(pres.cov),]
+back.cov <- back.cov[complete.cases(back.cov),]
+val.cov <- val.cov[complete.cases(val.cov),]
+
+#combine presence and background points together
+all.cov <- rbind(pres.cov, back.cov)
+
+all.cov <- all.cov[rowSums(all.cov[, c("canopy", "elev", "mesic1km", "precip")]) != 0, ]
+
+#inspect
+ head(all.cov)
+```
+
+```{r}
+#fit model
+layers_r <- raster::stack(layers) #create one multi-band raster object that holds all the individual layers together
+bioclim.vath <- dismo::bioclim(layers_r, vath.pres.xy)
+
+#plot
+plot(bioclim.vath, a=2, b=1, p=0.85)        #elev-canopy plot 85% quantile bounding box
+plot(bioclim.vath, a=2, b=3, p=0.85)        #elev-mesic plot 85% quantile bounding box
+plot(bioclim.vath, a=2, b=4, p=0.85)        #elev-precip plot 85% quantile bounding box
+
+#mapping
+bioclim.map <- predict(layers_r, bioclim.vath) #for every pixel in the raster stack (layers_r), calculate how similar its environment is to the presence envelope defined in bioclim.vath.
+
+#plot
+plot(bioclim.map, axes=F, box=F, main="bioclim")
+```
+
+```{r}
+#GLMs
+#the model predicts the probability that the species is present at a given location based on covariates.
+glm.vath <- glm(pres~canopy+elev+I(elev^2)+mesic1km+precip, family=binomial(link=logit), data=all.cov)
+
+#inspect
+# summary(glm.vath)
+
+#mapping
+#in this case, we specify type 'response' to make predictions on the probability scale. Otherwise, predictions would be on the link scale (here, the logit scale).
+glm.map <- predict(layers_r, glm.vath, type="response")
+
+#plot
+# plot(glm.map, axes=F, box=F, main="GLM")
+
+#GAMs 
+#default settings with optimal knots determined by generalized cross validation
+gam.vath <- gam(pres~s(canopy)+s(elev)+s(mesic1km)+s(precip), family=binomial(link=logit), method="ML", data=all.cov)
+
+#manually alter the number of knots
+gam.vath.knot3 <- gam(pres~s(canopy,k=3)+s(elev,k=3)+s(mesic1km,k=3)+s(precip,k=3), family=binomial(link=logit), method="ML", data=all.cov)
+gam.vath.knot6 <- gam(pres~s(canopy,k=6)+s(elev,k=6)+s(mesic1km,k=6)+s(precip,k=6), family=binomial(link=logit), method="ML", data=all.cov)
+
+#change the smoothing function (cr: Cubic Regression Spline)
+gam.vath.cr <- gam(pres~s(canopy, bs="cr")+s(elev, bs="cr")+s(mesic1km, bs="cr")+s(precip, bs="cr"), family=binomial(link=logit), method="ML", data=all.cov)
+
+#run together below
+#set up a 4 × 4 layout: one variable per row, one model per column
+par(mfrow = c(4, 4), mar = c(4, 4, 2, 1))
+
+#canopy
+plot(gam.vath, select = 1, shade = TRUE, main = "Default (canopy)")
+plot(gam.vath.knot3, select = 1, shade = TRUE, main = "k = 3 (canopy)")
+plot(gam.vath.knot6, select = 1, shade = TRUE, main = "k = 6 (canopy)")
+plot(gam.vath.cr, select = 1, shade = TRUE, main = "bs='cr' (canopy)")
+
+#elevation
+plot(gam.vath, select = 2, shade = TRUE, main = "Default (elev)")
+plot(gam.vath.knot3, select = 2, shade = TRUE, main = "k = 3 (elev)")
+plot(gam.vath.knot6, select = 2, shade = TRUE, main = "k = 6 (elev)")
+plot(gam.vath.cr, select = 2, shade = TRUE, main = "bs='cr' (elev)")
+
+#mesic1km
+plot(gam.vath, select = 3, shade = TRUE, main = "Default (mesic1km)")
+plot(gam.vath.knot3, select = 3, shade = TRUE, main = "k = 3 (mesic1km)")
+plot(gam.vath.knot6, select = 3, shade = TRUE, main = "k = 6 (mesic1km)")
+plot(gam.vath.cr, select = 3, shade = TRUE, main = "bs='cr' (mesic1km)")
+
+#precip
+plot(gam.vath, select = 4, shade = TRUE, main = "Default (precip)")
+plot(gam.vath.knot3, select = 4, shade = TRUE, main = "k = 3 (precip)")
+plot(gam.vath.knot6, select = 4, shade = TRUE, main = "k = 6 (precip)")
+plot(gam.vath.cr, select = 4, shade = TRUE, main = "bs='cr' (precip)")
+```
+
+```{r}
+# run together above
+
+#mapping
+gam.map <- predict(layers_r, gam.vath, type="response")
+
+#plot
+plot(gam.map, axes=F, box=F, main="GAM")
+```
+```{r}
+round(AIC(gam.vath, gam.vath.knot3, gam.vath.knot6, gam.vath.cr), 1)
+
+```
+
+
+
+```{r}
+#random forest model (default)
+rf.vath <- randomForest(as.factor(pres) ~ canopy+elev+mesic1km+precip, na.action=na.omit, data=all.cov)
+
+#tuning model
+#ntree is the number of trees that are grown to produce the forest
+#here we specify ntreeTry = 500, which is the default in the function
+rf.vath.tune <- tuneRF(y=as.factor(all.cov$pres), x = all.cov[,c(3:6)], stepFactor=0.5, ntreeTry=500)
+
+#update rf model with mtry=1 based on tuning
+rf.vath <- randomForest(as.factor(pres) ~ canopy+elev+mesic1km+precip, mtry=1, ntree=500, na.action=na.omit, data=all.cov)
+
+#variable importance plot
+varImpPlot(rf.vath)
+
+#mapping
+rf.map <- predict(layers, rf.vath, type="prob",index=2)
+
+#plot
+plot(rf.map, axes=F, box=F, main="RF")
+```
+
+```{r}
+#for Maxent to run, place the maxent.jar file in the following directory:
+# system.file("java",package="dismo")
+back.xy_only <- back.xy.df[, c("EASTING", "NORTHING")]
+
+#Maxent model (default)
+#the default maxent() function uses presence-only points (vath.pres.xy) and automatically generates 10,000 background points for comparison, extracting environmental values for both. Alternatively, we can manually use background points that is especially useful when comparing different modeling approaches.
+max.vath <- maxent(layers_r, p=vath.pres.xy)
+
+#provide background points
+max.vath <- maxent(layers_r, p=vath.pres.xy, a=back.xy_only, silent = TRUE)
+
+#tuning a maxent model
+#we can tune the Maxent model in following two common approaches: (1) adjust the regularization of the model; and (2) adjust the types of features considered.
+#Maxent uses the lasso technique for regularization, such that coefficients that do not explain variation in presence locations are penalized and shrink toward zero.
+#the parameter (beta) is a constant that is multiplied by the default regularization value. As beta increases, a greater penalty is imposed.
+maxent.beta.3 <- maxent(layers_r, p=vath.pres.xy, a=back.xy_only,
+                      args=c("betamultiplier=0.3"))
+maxent.beta3 <- maxent(layers_r, p=vath.pres.xy, a=back.xy_only,
+                   args=c("betamultiplier=3"))
+
+#we tell Maxent to not use product (interactions), hinge, or threshold features. This reduces the model complexity to only consider linear and quadratic features.
+maxent.features <- maxent(layers_r, p=vath.pres.xy, a=back.xy_only,
+                      args=c("noproduct", "nohinge","nothreshold","noautofeature"))
+
+#run together below
+#create a 1×4 layout
+par(mfrow = c(1, 4), mar = c(4, 2, 2, 1), oma = c(0, 0, 0, 0))  # <- oma adds outer margin
+
+#elevation
+response(max.vath, var = "elev", expand = 0)              # default (red); we specify expand = 0 to constrain the response plots only to the range of data considered.
+response(maxent.beta.3, var = "elev", expand = 0, add=TRUE, col="#56B4E9")   # beta = 0.3 (blue)
+response(maxent.beta3, var = "elev", expand = 0, add=TRUE, col="#E69F00")    # beta = 3 (yellow)
+response(maxent.features, var = "elev", expand = 0, add=TRUE, col="#D55E00") # linear+quad (orange)
+title("Elevation")
+
+#mesic1km
+response(max.vath, var = "mesic1km", expand = 0)
+response(maxent.beta.3, var = "mesic1km", expand = 0, add=TRUE, col="#56B4E9")
+response(maxent.beta3, var = "mesic1km", expand = 0, add=TRUE, col="#E69F00")
+response(maxent.features, var = "mesic1km", expand = 0, add=TRUE, col="#D55E00")
+title("Mesic")
+
+#canopy
+response(max.vath, var = "canopy", expand = 0)
+response(maxent.beta.3, var = "canopy", expand = 0, add=TRUE, col="#56B4E9")
+response(maxent.beta3, var = "canopy", expand = 0, add=TRUE, col="#E69F00")
+response(maxent.features, var = "canopy", expand = 0, add=TRUE, col="#D55E00")
+title("Canopy")
+
+#precipitation
+response(max.vath, var = "precip", expand = 0)
+response(maxent.beta.3, var = "precip", expand = 0, add=TRUE, col="#56B4E9")
+response(maxent.beta3, var = "precip", expand = 0, add=TRUE, col="#E69F00")
+response(maxent.features, var = "precip", expand = 0, add=TRUE, col="#D55E00")
+title("Precipitation")
+
+#add a horizontal legend under all panels
+legend("topleft", inset = 0.02, horiz = FALSE, bty = "n", cex = 1,
+       legend = c("Default", "Beta = 0.3", "Beta = 3", "Linear + Quadratic"),
+       col = c("red", "#56B4E9", "#E69F00", "#D55E00"),
+       lwd = 2)
+```
+
+```{r}
+#run together above
+
+#get AUC statistics for each model by comparing with validation data (i.e., vath.val.pres and vath.val.abs)
+#AUC stands for Area Under the Receiver Operating Characteristic (ROC) Curve. It measures a model’s ability to distinguish between presence and absence locations.
+evaluate(p = vath.val.pres, a = vath.val.abs, max.vath, layers_r)
+evaluate(p = vath.val.pres, a = vath.val.abs, maxent.beta.3, layers_r)
+evaluate(p = vath.val.pres, a = vath.val.abs, maxent.beta3, layers_r)
+evaluate(p = vath.val.pres, a = vath.val.abs, maxent.features,layers_r)
+
+max.map <- predict(layers_r, max.vath)
+
+#plot
+plot(max.map, axes=F, box=F, main="Maxent")
+```
+
+```{r}
+#combine rasters
+all_maps <- c(bioclim.map, glm.map, gam.map, rf.map, max.map)
+names(all_maps) <- c("Bioclim", "GLM", "GAM", "Random Forests", "Maxent")
+
+cols <- viridis(100)
+zlim <- c(0, 1)
+
+#set layout and margins
+par(mfrow = c(2, 3), mar = c(3, 3, 2, 2), oma = c(0, 0, 0, 5), pty = "s", cex.main = 1.2, cex.axis = 1, cex.lab = 1)
+
+#plot all maps
+for (i in 1:5) {
+  plot(all_maps[[i]], col = cols, range = zlim,
+       legend = FALSE, main = names(all_maps)[i],
+       axes = TRUE, box = TRUE)
+}
+
+#remove scientific notation on axes
+options(scipen = 999)   # prevents scientific notation globally
+
+#empty sixth slot for the legend
+plot.new()
+
+#shared legend
+image.plot(
+  legend.only = TRUE,
+  col = cols,
+  zlim = zlim,
+  legend.width = 1.3,
+  legend.shrink = 0.8,
+  smallplot = c(0.75, 0.9, 0.25, 0.75),
+  legend.mar = 3,  # increase margin space for label
+  legend.args = list(
+    text = "thrush occurrence",
+    side = 3,        # place label above color bar
+    line = 1,
+    cex = 1.1
+  )
+)
+```
+
+```{r}
+#define covariates, ranges, and medians
+covars <- c("elev", "mesic1km", "canopy", "precip")
+
+#for each covariate, generate a sequence of 100 evenly spaced values covering the full range (min → max) of observed data
+ranges  <- lapply(back.cov[covars], function(x)
+  seq(min(x, na.rm=TRUE), max(x, na.rm=TRUE), length=100))
+
+#compute the median value for each covariate, used as “fixed” reference values when varying one variable at a time.
+medians <- sapply(back.cov[covars], median, na.rm=TRUE)
+
+#function: create newdata varying one variable, others fixed at median
+make_partial_data <- function(var) {
+  #start with all covariates fixed at their medians
+  fixed <- as.list(medians)
+  #replace the chosen variable with its full range of values
+  fixed[[var]] <- ranges[[var]]
+  #create a data frame of all combinations (only one variable varies)
+  expand.grid(fixed)
+}
+
+#function: predict from all models
+predict_partial <- function(df) {
+  data.frame(
+    bioclim = predict(bioclim.vath, df),                # BIOCLIM envelope model
+    glm     = predict(glm.vath, df, type="response"),   # Generalized Linear Model
+    gam     = predict(gam.vath, df, type="response"),   # Generalized Additive Model
+    rf      = predict(rf.vath, df, type="prob")[,2],    # Random Forest (probability of presence)
+    max     = predict(max.vath, df)                     # MaxEnt (maximum entropy model)
+  )
+}
+
+#build partial prediction curves for each covariate
+partials <- lapply(covars, function(v) {
+  df <- make_partial_data(v)    #create input data varying covariate v
+  preds <- predict_partial(df)  #predict using all models
+  preds[[v]] <- df[[v]]         #add the variable’s actual values back for plotting
+  preds                         #return combined predictions and variable
+})
+names(partials) <- covars       #name list elements by covariate
+
+#plot settings
+cols <- c("black", "#1B3B8C","#56B4E9", "red", "#E69F00")
+names(cols) <- c("Bioclim", "GLM", "GAM", "Random Forests", "Maxent")
+
+par(mfrow=c(1,4), mar=c(4,3,2,1), oma=c(3,4,0,0)) #'mar' = inner margins, 'oma' = outer margin space (for legend)
+
+#plot partial responses
+for (v in covars) {
+  p <- partials[[v]]
+  plot(p[[v]], p$bioclim, type="l", lwd=2, col=cols[1],
+       ylim=c(0,0.9), xlab=switch(v,
+         "elev"="Elevation", "mesic1km"="Mesic",
+         "canopy"="Canopy", "precip"="Precipitation"),
+       ylab="Predicted value")
+  lines(p[[v]], p$glm, col=cols[2], lwd=2)
+  lines(p[[v]], p$gam, col=cols[3], lwd=2)
+  lines(p[[v]], p$rf,  col=cols[4], lwd=2)
+  lines(p[[v]], p$max, col=cols[5], lwd=2)
+}
+
+#add shared legend centered below all panels
+par(xpd=NA)
+legend(x = -1, y = 0.9,                 # move left/right with x; up/down with y
+       horiz = FALSE, bty = "n", cex = 1,
+       legend = names(cols),
+       col = cols, lwd = 2)
+```
+
+```{r}
+#weighted average based on AUC
+#val.cov is covariates values from layers at validation locations
+val.cov.pred <- val.cov[,cbind("canopy", "elev", "mesic1km","precip")]
+
+glm.val <- predict(glm.vath, val.cov.pred, type = "response")
+gam.val <- predict(gam.vath, val.cov.pred, type = "response")
+
+pres.cov <- terra::extract(layers_r, vath.val.pres)[, c("canopy","elev","mesic1km","precip")]
+abs.cov  <- terra::extract(layers_r, vath.val.abs)[,  c("canopy","elev","mesic1km","precip")]
+
+eval.glm <- evaluate(p = pres.cov, a = abs.cov, model = glm.vath)
+eval.gam <- evaluate(p = pres.cov, a = abs.cov, model = gam.vath)
+
+AUC.glm <- eval.glm@auc
+AUC.gam <- eval.gam@auc
+
+glm.map_v1 <- terra::rast(glm.map)
+gam.map_v1 <- terra::rast(gam.map)
+
+models <- c(glm.map, gam.map)
+names(models) <- c("GLM", "GAM")
+
+# Get AUC weights
+auc.weight <- c(AUC.glm, AUC.gam)
+
+# Normalize weights so they sum to 1
+auc.weight <- auc.weight / sum(auc.weight)
+
+# Weighted ensemble
+ensemble.auc <- (models[[1]] * auc.weight[1]) + (models[[2]] * auc.weight[2])
+
+#compute difference maps
+diff.glm <- ensemble.auc - models[[1]]
+diff.gam <- ensemble.auc - models[[2]]
+
+#plot all three maps side-by-side ---
+cols <- viridis(100)
+
+par(mfrow = c(1, 3), mar = c(3, 3, 3, 5), oma = c(0, 0, 0, 0))
+
+#ensemble suitability map
+plot(ensemble.auc, col = cols, range = c(0, 1), main = "Ensemble",
+     axes = TRUE, box = FALSE)
+
+# Difference maps
+plot(diff.glm, col = cols, main = "Ensemble - GLM", axes = TRUE, box = FALSE)
+plot(diff.gam, col = cols, main = "Ensemble - GAM", axes = TRUE, box = FALSE)
+
+#an ensemble from the GLM and GAM using a weighted mean based on AUC scores taken from K-fold validation, and the difference in ensemble predictions and predictions from the GLM and the GAM.
+```
+
+## Exercise Q1 (15 points). Visualize and compare how environmental covariates differ between presence points (pres = 1) and background points (pres = 0)
+
+# Use the hist() function to create histograms for each environmental covariate: Canopy, Elevation, Mesic1km, and Precipitation. (5 points)
+# Arrange the plots in a 2×4 layout using par(mfrow = c(2, 4)): The top row (first 4 plots) should show histograms for presence data (pres = 1).The bottom row (next 4 plots) should show histograms for background data (pres = 0). (Hint: hist(all.cov\(canopy[all.cov\)pres == 1], main = “Canopy (Presence)”, col = “darkgreen”)) (5 points)
+# Which environmental variables show clear differences in distribution between presence and background points? (5 points)
+
+```{r}
+# =========================================================
+# Exercise Q1 (15 points)
+# Visualize and compare covariates for presence (pres=1) vs background (pres=0)
+# =========================================================
+
+# 2 × 4 layout: top row = presence, bottom row = background
+par(mfrow = c(2, 4), mar = c(4, 4, 2, 1))
+
+# --- Presence (pres = 1) ---
+hist(all.cov$canopy[all.cov$pres == 1],
+     main = "Canopy (Presence)", xlab = "Canopy", col = "darkgreen")
+hist(all.cov$elev[all.cov$pres == 1],
+     main = "Elevation (Presence)", xlab = "Elevation", col = "darkgreen")
+hist(all.cov$mesic1km[all.cov$pres == 1],
+     main = "Mesic1km (Presence)", xlab = "Mesic1km", col = "darkgreen")
+hist(all.cov$precip[all.cov$pres == 1],
+     main = "Precipitation (Presence)", xlab = "Precipitation", col = "darkgreen")
+
+# --- Background (pres = 0) ---
+hist(all.cov$canopy[all.cov$pres == 0],
+     main = "Canopy (Background)", xlab = "Canopy", col = "gray")
+hist(all.cov$elev[all.cov$pres == 0],
+     main = "Elevation (Background)", xlab = "Elevation", col = "gray")
+hist(all.cov$mesic1km[all.cov$pres == 0],
+     main = "Mesic1km (Background)", xlab = "Mesic1km", col = "gray")
+hist(all.cov$precip[all.cov$pres == 0],
+     main = "Precipitation (Background)", xlab = "Precipitation", col = "gray")
+
+# Optional: reset plotting layout
+# par(mfrow = c(1, 1))
+
+```
+The variable that seems most different in the presence versus background graphs appears to be the mesic variable. In the presence graphic the distribution is highly skewed to the right. In the background graphic the distribution is highly skewed to the left. Following that, the canopy's presence would likely be next period while both the presence and background distributions have significant distribution around 0, the presence graphic shows a strong distribution on the positive end of the scale. The canopy background distribution is nowhere near as strong. Beyond that, it appears that the elevation presence and background distributions are similarly distributed. The precipitation presence and background distributions also seem to be similarly distributed despite the precipitation background graphic having more of a tail to it. The majority of the mass of the distribution is similar.
+
+## Exercise Q2 (10 points). Based on the above envelopes (p=0.85), summarize the range of environmental conditions under which the species most commonly occurs? (Hint: elev-canopy plot; elev-mesic plot, and elev-precip plot).
+
+It appears that the species occupies areas with a range of canopy conditions. It does appear that there is some skew towards canopy presence but there have certainly been plenty of presence observations in low canopy or mid canopy areas. Regarding mesic areas, there does appear to be a strong skew towards mesic areas. However, presence has been observed in plenty of areas with mid or even low mesic composition. The range of precipitation appears to occur between 65 or 70 and up to slightly over 140. This occurs along an elevation gradient between 900 and 1700 meters. Distribution appears to be pretty even. 
+
+## Exercise Q3 (15 points). The plots show smooth relationships from four GAMs predicting species presence probability. x-axis: environmental variable; tick marks show observation locations. y-axis: partial effect on the log-odds of presence; values above 0 increase, and values below 0 decrease, the probability of occurrence. The area between dashed lines represent the 95% confidence interval. A flat line near 0 indicates little or no effect of that variable.
+
+# Compare the four models using both the figure and quantitative fit statistics. Which model has the best fit? (Hint: round(AIC(gam.vath, gam.vath.knot3, gam.vath.knot6, gam.vath.cr), 1)) (5 points)
+# What does the parameter k (number of knots) control in a GAM? (5 points)
+# Describe how changing k influences the model’s flexibility and the apparent ecological response (5 points).
+
+Canopy appeared to have little or no influence on probability. Elevation appeared to provide increased probability in mid elevations. However, likelihood became negative when departing from that optimum range. Messick had no apparent effect. Precipitation, like elevation, appeared to have an optimum range between 60 or 70 and 150. After reviewing the AIC, it appeared that the Knot 6 model performed best with an AIC value of 662.8. The CR model was next lowest with 665. It appears that these models with the greatest flexibility to model more complex trends provided the best fit. Increasing K allows the GAM to capture more detailed patterns in the data. If the K is too small, you could underfit the data. If it is too large, you could overfit the data and and up putting a trend line on noise. These models allow us to capture nonlinear trends in the data.
+
+## Exercise Q4 (25 points). The final maps show predicted thrush occurrence from five distribution models (BIOCLIM, GLM, GAM, Random Forests, and Maxent).
+
+# By visually comparing the five maps, which models show similar spatial patterns, and which appear most different? (Hint: Consider how the high occurrence (bright yellow) areas align across models) (10 points)
+# Pick two models (e.g., GLM vs. Random Forests, or BIOCLIM vs. Maxent) and explain why their predicted occurrence patterns differ. (Hint: Consider how each model represents relationships between species occurrence and environmental variables. For example, linear vs. nonlinear responses, sensitivity to interactions among predictors, or how presence-only versus presence–background data are handled) (15 points)
+
+All of the models appear to predict their highest likelihood of occurrence to be in the mountains on the western side of the observation area. However the total likelihood varies greatly among the models. The random forest model appears to predict the least likelihood among the models. The Maxent model appears to show the greatest area with a high likelihood for thrush occurrence. The GTLM, GSM, and Bioclim show moderate degrees of thrush occurrence likelihood. Based on what I am seeing, the random forest model may be predicting such low occurrence likelihood across the observation area because these models tend to classify sharply between suitable and unsuitable habitat. It seems that they may overfit the data and result in a much more narrow interpretation of the appropriate conditions. Meanwhile, the maxent model provides a much greater gradient of possibilities. This gradient would be in contrast to a random forest model that assigns very high likelihood in a narrow window of conditions and a very low likelihood in areas that do not possess those conditions.
+
+## Exercise Q5 (25 points). The figure above shows partial response curves for five modeling approaches (Bioclim, GLM, GAM, Random Forests, and Maxent) predicting species thrush occurrence as a function of environmental variables (elevation, mesic forest cover, canopy, and precipitation).
+
+# Based on the response curves, which model do you think provides the most realistic and ecologically interpretable predictions of species–environment relationships? (Hint: steeper or highly irregular curves may indicate overfitting) (10 points).
+# Briefly explain why you prefer that model (Hint: consider aspects such as model flexibility, smoothness of relationships, overfitting vs. generalization, and ecological interpretability) (15 points).
+
+The maxent trend lines are very steep in many places and make very abrupt turns. This would leave me to think that it is not a particularly realistic model. Additionally the Bioclim trend lines are steep and jagged. This would lead me to believe that they do not follow true natural patterns. Similarly, the random forest model appears to dart up and down across the distribution. This makes me believe that the data is in fact overfitted because an animal would not be so specific in its occurrence skipping over certain elevations to occur in elevations or conditions on either side. Finally the GLM and G AM models up here moderate in their occurrence estimation and smooth and their trends. I would believe that these two models are the two most likely to be accurate. Of these two, I suppose I would choose the GM as my preferred model because I believe it best captures the nonlinear effects that we believe are present in this data.
+
+## Exercise Q6 (10 points). Compare the ensemble prediction map with the individual GLM and GAM maps. Why might combining models with different functional forms (like GLM and GAM) improve prediction reliability? (Hint: Consider model uncertainty and how ensemble averaging may reduce overfitting or highlight consistent spatial patterns)
+
+In evaluating the ensemble, it appears to have very stark transitions between high and low likelihoods of occurrence. The ensemble GLM appears to depict a generally low likelihood of occurrence potentially below 0 in most of its range. Finally the ensemble GM has a more narrow gradient on high and low likelihood of occurrence. Few places show high likelihood and few places show very low likelihood with moderate likelihood occurring throughout most of the range. The ensemble prediction maps combine the GLM and GSM outputs using AUC weighted averaging. I could imagine that doing this sort of model averaging can be helpful when one type of model is better at making estimations off of particular types of variables such as those with nonlinear trends while the other might be better at other things. It is an interesting to me however that we would be evaluating an ensemble of the GLM and the G AM. These two models appeared to perform most closely. It also appeared that the nonlinear trends had the greatest influence on distribution. So, if the GLM might be underfitting the nonlinear responses and the nonlinear trends appearing to be more influential, I'm not sure that the model averaging is particularly helpful in this situation.
